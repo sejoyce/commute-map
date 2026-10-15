@@ -1,0 +1,19 @@
+{
+  "name": "commute-map",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@turf/turf": "^7.1.0",
+    "maplibre-gl": "^4.7.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1",
+    "vite": "^5.4.0"
+  }
+}
