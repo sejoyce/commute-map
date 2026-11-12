@@ -15,6 +15,7 @@ const status = (msg) => ($('status').textContent = msg);
 let origin = null;
 const isos = {};      // mode -> FeatureCollection
 let listings = [];
+let notes = [];       // how each area was calculated, shown under the form
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -39,14 +40,19 @@ $('modes').addEventListener('change', (e) => {
   refresh();
 });
 $('go').onclick = search;
-$('addr').onkeydown = (e) => e.key === 'Enter' && search();
+$('departTime').addEventListener('change', () => { if (MODES.transit.on) refresh(); });
+function departSeconds() {
+  const [h, m] = ($('departTime').value || '08:30').split(':').map(Number);
+  return h * 3600 + m * 60;
+}
+$('originQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
 ['listOn', 'kind'].forEach((id) => ($(id).onchange = refresh));
 ['maxPrice', 'minBeds'].forEach((id) => ($(id).oninput = renderListings));
 
 async function search() {
   try {
     status('Finding address…');
-    origin = await geocode($('addr').value);
+    origin = await geocode($('originQuery').value);
     marker.setLngLat([origin.lng, origin.lat]).addTo(map);
     map.flyTo({ center: [origin.lng, origin.lat], zoom: 11 });
     await refresh();
@@ -77,12 +83,15 @@ async function refresh() {
   if (!origin || !map.isStyleLoaded()) return;
   const active = Object.keys(MODES).filter((k) => MODES[k].on);
   const errors = [];
+  notes = [];
   status('Loading areas…');
   await Promise.all(Object.keys(MODES).map(async (k) => {
     if (!MODES[k].on) { isos[k] = null; map.getSource(`iso-${k}`).setData(featureCollection([])); return; }
     try {
-      isos[k] = await isochrone(k, origin, MODES[k].min);
+      isos[k] = await isochrone(k, origin, MODES[k].min, departSeconds());
       map.getSource(`iso-${k}`).setData(isos[k]);
+      const note = isos[k].features[0]?.properties?.note;
+      if (note) notes.push(note);
     } catch (e) { isos[k] = null; errors.push(`${MODES[k].label}: ${e.message}`); }
   }));
 
@@ -113,6 +122,6 @@ function renderListings(errors = []) {
     return shapes.every((s) => s.features.some((f) => booleanPointInPolygon(pt, f)));
   }) : [];
   map.getSource('listings')?.setData(featureCollection(hits.map((l) => point([l.lng, l.lat], l))));
-  const msg = errors.length ? errors.join(' ') : '';
+  const msg = [...(errors.length ? errors : []), ...notes].join(' ');
   status(`${$('listOn').checked ? `${hits.length} listings in the area. ` : ''}${msg}`);
 }

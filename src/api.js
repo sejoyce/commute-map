@@ -1,3 +1,5 @@
+import { localTransitIsochrone } from './transit/local.js';
+
 const env = import.meta.env;
 
 // Address -> [lng, lat]. Nominatim is fine for light personal use (1 req/sec policy).
@@ -12,29 +14,21 @@ export async function geocode(q) {
 const ORS_PROFILE = { drive: 'driving-car', walk: 'foot-walking', bike: 'cycling-regular' };
 
 // Returns a GeoJSON FeatureCollection of polygons reachable within `minutes`.
-export async function isochrone(mode, { lng, lat }, minutes) {
+// `departSeconds` (seconds after midnight) only matters for transit, which depends on the timetable.
+export async function isochrone(mode, { lng, lat }, minutes, departSeconds = 8.5 * 3600) {
   if (mode === 'transit') {
-    if (!env.VITE_TT_APP_ID) throw new Error('Add VITE_TT_APP_ID and VITE_TT_API_KEY for transit.');
-    const res = await fetch('https://api.traveltimeapp.com/v4/time-map', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/geo+json',
-        'X-Application-Id': env.VITE_TT_APP_ID,
-        'X-Api-Key': env.VITE_TT_API_KEY,
-      },
-      body: JSON.stringify({
-        departure_searches: [{
-          id: 'origin',
-          coords: { lat, lng },
-          departure_time: nextWeekdayMorning(),
-          travel_time: minutes * 60,
-          transportation: { type: 'public_transport' },
-        }],
-      }),
-    });
-    if (!res.ok) throw new Error(`TravelTime error ${res.status}`);
-    return res.json();
+    // Prefer the baked local timetable (real schedules, free). Fall back to Geoapify's
+    // estimate for addresses outside any region we have data for, or if the data isn't built.
+    const local = await localTransitIsochrone({ lng, lat }, minutes, departSeconds);
+    if (local) return local;
+    const fallback = await geoapifyTransitIsoline({ lng, lat }, minutes);
+    if (fallback.features[0]) {
+      fallback.features[0].properties = {
+        ...fallback.features[0].properties,
+        note: 'Transit: Geoapify estimate (no local timetable for this area), so rail frequency may be undercounted.',
+      };
+    }
+    return fallback;
   }
   if (!env.VITE_ORS_KEY) throw new Error('Add VITE_ORS_KEY for driving, walking and cycling.');
   const res = await fetch(`https://api.openrouteservice.org/v2/isochrones/${ORS_PROFILE[mode]}`, {
@@ -46,13 +40,36 @@ export async function isochrone(mode, { lng, lat }, minutes) {
   return res.json();
 }
 
-// Transit depends on schedules, so use a realistic commute time: next weekday, 8:30 AM local.
-function nextWeekdayMorning() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  while ([0, 6].includes(d.getDay())) d.setDate(d.getDate() + 1);
-  d.setHours(8, 30, 0, 0);
-  return d.toISOString();
+// Geoapify's isoline API covers transit, which openrouteservice doesn't. It tries real
+// schedule-based `transit` first, falling back to `approximated_transit` if that mode
+// isn't available for this location (Geoapify doesn't document exactly where each applies).
+// Slow requests come back as HTTP 202 with an id to poll until the result is ready.
+async function geoapifyTransitIsoline({ lng, lat }, minutes) {
+  if (!env.VITE_GEOAPIFY_KEY) throw new Error('Add VITE_GEOAPIFY_KEY for transit.');
+  try {
+    return await requestGeoapifyIsoline('transit', { lng, lat }, minutes);
+  } catch (e) {
+    return await requestGeoapifyIsoline('approximated_transit', { lng, lat }, minutes);
+  }
+}
+
+async function requestGeoapifyIsoline(geoapifyMode, { lng, lat }, minutes) {
+  const base = 'https://api.geoapify.com/v1/isoline';
+  const params = `lat=${lat}&lon=${lng}&type=time&mode=${geoapifyMode}&range=${minutes * 60}&apiKey=${env.VITE_GEOAPIFY_KEY}`;
+  let res = await fetch(`${base}?${params}`);
+  if (!res.ok) throw new Error(`Geoapify error ${res.status}`);
+  let data = await res.json();
+
+  // 202 means the calculation is still running; poll by id until it's ready.
+  for (let attempt = 0; res.status === 202 && attempt < 20; attempt++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    res = await fetch(`${base}?id=${data.properties?.id}&apiKey=${env.VITE_GEOAPIFY_KEY}`);
+    if (!res.ok) throw new Error(`Geoapify error ${res.status}`);
+    data = await res.json();
+  }
+  if (res.status === 202) throw new Error('Geoapify transit isoline timed out');
+  if (!data.features?.length) throw new Error(`No transit data from Geoapify (${geoapifyMode})`);
+  return data;
 }
 
 // Listings normalized to { id, address, price, beds, lng, lat }.

@@ -26,6 +26,7 @@
     .row label { flex:1; display:flex; gap:8px; align-items:center; }
     .swatch { width:12px; height:12px; border-radius:50%; }
     .row input[type=number] { width:64px; }
+    .row input[type=time] { width:auto; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; font:inherit; }
     #status { color:var(--muted); margin-top:12px; min-height:2.8em; }
     #map { height:100%; }
     @media (max-width:720px) { #app { grid-template-columns:1fr; grid-template-rows:auto 60vh; } aside { border:0; } }
@@ -35,9 +36,10 @@
   <div id="app">
     <aside>
       <h1>Commute Map</h1>
-      <div class="row"><input id="addr" type="text" placeholder="Enter a US address" aria-label="Address" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" /><button id="go" type="button">Search</button></div>
+      <div class="row"><input id="originQuery" name="originQuery" type="text" placeholder="Enter a US address" aria-label="Starting point" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore /><button id="go" type="button">Search</button></div>
       <h2>Travel time (minutes)</h2>
       <div id="modes"></div>
+      <div class="row"><label for="departTime">Transit leaves at</label><input id="departTime" type="time" value="08:30" /></div>
       <h2>Listings</h2>
       <div class="row"><label><input id="listOn" type="checkbox" /> Show listings inside the area</label></div>
       <div class="row"><select id="kind"><option value="rent">For rent</option><option value="sale">For sale</option></select></div>
